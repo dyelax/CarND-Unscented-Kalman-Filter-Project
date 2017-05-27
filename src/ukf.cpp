@@ -1,6 +1,7 @@
 #include "ukf.h"
 #include "Eigen/Dense"
 #include <iostream>
+#include <math.h>
 
 using namespace std;
 using Eigen::MatrixXd;
@@ -18,16 +19,22 @@ UKF::UKF() {
   use_radar_ = true;
 
   // initial state vector
-  x_ = VectorXd(5);
+  n_x_ = 5;
+  lambda_ = 3 - n_x_;
+
+  n_aug_ = 7;
+  n_sig_ = 2 * n_aug_ + 1;
+  
+  x_ = VectorXd(n_x_);
 
   // initial covariance matrix
-  P_ = MatrixXd(5, 5);
+  P_ = MatrixXd(5, 5)::Identity();
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 30;
+  std_a_ = 6;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 30;
+  std_yawdd_ = M_PI / 16;
 
   // Laser measurement noise standard deviation position1 in m
   std_laspx_ = 0.15;
@@ -43,14 +50,19 @@ UKF::UKF() {
 
   // Radar measurement noise standard deviation radius change in m/s
   std_radrd_ = 0.3;
-
-  /**
-  TODO:
-
-  Complete the initialization. See ukf.h for other member properties.
-
-  Hint: one or more values initialized above might be wildly off...
-  */
+  
+  // Init covar mat as identity (Might need to change some diag values?)
+  P_ = MatrixXd::Identity(size, size);
+  
+  // Init weights
+  weights_ = VectorXd(n_aug_);
+  for (int i = 0; i < n_sig_; i++) {
+    if (i == 0) {
+      weights_(i) = lambda_ / (lambda_ + n_aug_);
+    } else {
+      weights_(i) = 1 / (2 * (lambda_ + n_aug_));
+    }
+  }
 }
 
 UKF::~UKF() {}
