@@ -158,13 +158,88 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
    *  Update
    ****************************************************************************/
 
-  // Update the process noise covariance matrix (Q).
-  if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR) {
-    // Radar updates
+  if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR && use_radar_) {
     UpdateRadar(measurement_pack.raw_measurements_);
-  } else {
+  } else if (measurement_pack.sensor_type_ == MeasurementPackage::LASER && use_laser_) {
     UpdateLidar(measurement_pack.raw_measurements_);
   }
+}
+
+/**
+ * Applies the motion model f(x_k, nu_k) and returns x_(k+1).
+ * @param x_aug an augmented state vector (usually a sigma point).
+ * @param delta_t the time since the last prediction, in seconds
+ */
+VectorXd MotionModel(VectorXd &x_aug, double delta_t) {
+  VectorXd covarTransVec = VectorXd(n_x);
+  VectorXd stateTransVec = VectorXd(n_x);
+  
+  float px      = x_aug(0);
+  float py      = x_aug(1);
+  float v       = x_aug(2);
+  float psi     = x_aug(3);
+  float psid    = x_aug(4);
+  float n_a     = x_aug(5);
+  float n_psidd = x_aug(6);
+  
+  covarTransVec << 0.5 * pow(delta_t, 2) * cos(psi) * n_a,
+  0.5 * pow(delta_t, 2) * sin(psi) * n_a,
+  delta_t * n_a,
+  0.5 * pow(delta_t, 2) * n_psidd,
+  delta_t * n_psidd;
+  
+  eps = 0.00001;
+  if (fabs(psid) < eps) {
+    stateTransVec << v * cos(psi) * delta_t,
+                     v * sin(psi) * delta_t,
+                     0,
+                     psid * delta_t,
+                     0;
+  } else {
+    stateTransVec << (v / psid) * (sin(psi + psid * delta_t) - sin(psi)),
+                     (v / psid) * (-cos(psi + psid * delta_t) + cos(psi)),
+                     0,
+                     psid * delta_t,
+                     0;
+  }
+  
+  return x_aug.head(5) + stateTransVec + covarTransVec;
+}
+
+/** 
+ * Computes the sigma points for an update step.
+ *
+ */
+MatrixXd GetSigPoints() {
+  // Find sigma points.
+  VectorXd x_aug = VectorXd(n_aug_);
+  x_aug.fill(0);
+  x_aug.head(5) = x_;
+  // Mean value of noises (last 2 elts of augmented state) are 0, so leave them be.
+  
+  MatrixXd Q = MatrixXd(2, 2);
+  Q << pow(std_a_, 2), 0,
+       0,              pow(std_yawdd_, 2);
+  
+  MatrixXd P_aug = MatrixXd(n_aug_, n_aug_);
+  
+  P_aug.fill(0);
+  P_aug.topLeftCorner(n_x_, n_x_) = P_;
+  P_aug.bottomRightCorner(2, 2) = Q;
+  
+  MatrixXd Xsig_aug = MatrixXd(n_aug_, n_sig_);
+  
+  // Create square root matrix.
+  MatrixXd A = P_aug.llt().matrixL();
+  
+  // Create augmented sigma points.
+  Xsig_aug.col(0) = x_aug;
+  for (int i = 0; i < n_aug_; i++) {
+    Xsig_aug.col(i + 1)         = x_aug + sqrt(lambda + n_aug_) * A.col(i);
+    Xsig_aug.col(i + 1 + n_aug) = x_aug - sqrt(lambda + n_aug_) * A.col(i);
+  }
+
+  return Xsig_aug;
 }
 
 /**
@@ -173,62 +248,30 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
  * measurement and this one.
  */
 void UKF::Prediction(double delta_t) {
-  /**
-  TODO:
-
-  Complete this function! Estimate the object's location. Modify the state
-  vector, x_. Predict sigma points, the state, and the state covariance matrix.
-  */
-  // Compute motion and noise matrices.
-  px   = x_(0);
-  py   = x_(1);
-  v    = x_(2);
-  yaw  = x_(3);
-  yawd = x_(4);
-  std_a2 = pow(std_a_, 2);
-  std_yawdd2 = pow(std_yawdd_, 2);
+  MatrixXd Xsig_aug = GetSigPoints();
   
-  VectorXd noise = VectorXd(n_x_);
-  float half_dt2 = 0.5 * pow(delta_t, 2);
-  noise << half_dt2 * cos(yaw) * std_a2,
-           half_dt2 * sin(yaw) * std_a2,
-           delta_t * std_a2,
-           half_dt2 * std_yawdd2,
-           delta_t * std_yawdd2;
-  
-  VectorXd motion = VectorXd(n_x_);
-  if (yawd == 0) {
-    motion << v * cos(yaw) * delta_t,
-              v * sin(yaw) * delta_t,
-              0,
-              yaw * delta_t,
-              0;
-  } else {
-    motion << (v / yawd) * (sin(yaw + yawd * delta_t) - sin(yaw)),
-              (v / yawd) * (-cos(yaw + yawd * delta_t) + cos(yaw)),
-              0,
-              yaw * delta_t,
-              0;
+  // Compute predictions on sigma points
+  for (int i = 0; i < n_sig_; i++) {
+    Xsig_pred_.col(i) = MotionModel(Xsig_aug.col(i), delta_t);
   }
   
-  // Find sigma points.
-  VectorXd x_aug = VectorXd(n_aug_);
-  x_aug.head(5) = x_;
-  x_aug(6) = pow(std_a_, 2)
+  // Predict mean and covar.
+  x_.fill(0.0);
+  for (int i = 0; i < n_sig_; i++) {  //iterate over sigma points
+    x_ += weights(i) * Xsig_pred.col(i);
+  }
   
-  MatrixXd Q = MatrixXd(2, 2);
-  Q << std_a2, 0,
-       0,      std_yawdd2;
-  
-  MatrixXd P_aug = MatrixXd(n_aug_, n_aug_);
-  
-  
-  
-  MatrixXd Xsig = MatrixXd(n_aug_, n_sig_);
-  
-  
-  
-  
+  //predicted state covariance matrix
+  P_.fill(0.0);
+  for (int i = 0; i < n_sig_; i++) {  //iterate over sigma points
+    // state difference
+    VectorXd x_diff = Xsig_pred.col(i) - x_;
+    //angle normalization
+    while (x_diff(3) >  M_PI) x_diff(3) -= 2 * M_PI;
+    while (x_diff(3) < -M_PI) x_diff(3) += 2 * M_PI;
+    
+    P_ += weights(i) * x_diff * x_diff.transpose() ;
+  }
 }
 
 /**
