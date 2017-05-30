@@ -257,20 +257,18 @@ void UKF::Prediction(double delta_t) {
   
   // Predict mean and covar.
   x_.fill(0.0);
-  for (int i = 0; i < n_sig_; i++) {  //iterate over sigma points
+  for (int i = 0; i < n_sig_; i++) {
     x_ += weights(i) * Xsig_pred.col(i);
   }
   
-  //predicted state covariance matrix
   P_.fill(0.0);
-  for (int i = 0; i < n_sig_; i++) {  //iterate over sigma points
+  for (int i = 0; i < n_sig_; i++) {
     // state difference
     VectorXd x_diff = Xsig_pred.col(i) - x_;
     //angle normalization
-    while (x_diff(3) >  M_PI) x_diff(3) -= 2 * M_PI;
-    while (x_diff(3) < -M_PI) x_diff(3) += 2 * M_PI;
+    x_diff(3) -= (2 * M_PI) * floor((x_diff(3) + M_PI) / (2 * M_PI));
     
-    P_ += weights(i) * x_diff * x_diff.transpose() ;
+    P_ += weights(i) * x_diff * x_diff.transpose();
   }
 }
 
@@ -287,6 +285,29 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the lidar NIS.
   */
+  
+  // Measurement prediction for lidar
+
+  // Update the state by using standard Kalman Filter equations.
+  // Measurement model for lidar is linear wrt the state vector, so this is
+  // equivalent to using sigma points, but cheaper.
+  
+  // Linear motion model.
+  MatrixXd H = MatrixXd(2, 4);
+  H << 1, 0, 0, 0,
+       0, 1, 0, 0;
+  
+  // Intermediate calculations.
+  MatrixXd Ht = H.transpose();
+  VectorXd y = z - H * x_;
+  MatrixXd S = H_ * P_ * Ht + R_;
+  MatrixXd K = P_ * Ht * S.inverse();
+  long size = x_.size();
+  MatrixXd I = MatrixXd::Identity(size, size);
+  
+  // Update state and covariance mats.
+  x_ = x_ + K * y;
+  P_ = (I - K * H) * P_;
 }
 
 /**
@@ -302,4 +323,77 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the radar NIS.
   */
+  
+  //
+  // Measurement prediction for radar
+  //
+  int n_z = 3;
+  
+  //create matrix for sigma points in measurement space
+  MatrixXd Zsig = MatrixXd(n_z, n_sig_);
+  //mean predicted measurement
+  VectorXd z_pred = VectorXd(n_z);
+  //measurement covariance matrix S
+  MatrixXd S = MatrixXd(n_z, n_z);
+  
+  z_pred.fill(0);
+  for (int i = 0; i < n_sig_; i++) {
+    //transform sigma points into measurement space
+    VectorXd sigpt = Xsig_pred.col(i);
+    float px   = sigpt(0);
+    float py   = sigpt(1);
+    float v    = sigpt(2);
+    float psi  = sigpt(3);
+    float psid = sigpt(4);
+    
+    // Prevent div by 0
+    float eps = 0.00001;
+    if (fabs(px) < eps) {
+      px = eps;
+    }
+    if (fabs(py) < eps) {
+      py = eps;
+    }
+    
+    float rho = sqrt(pow(px, 2) + pow(py, 2));
+    float phi = atan2(py, px);
+    float rhod = v * (px * cos(psi) + py * sin(psi)) / rho;
+    
+    Zsig.col(i) << rho, phi, rhod;
+    
+    // Add to mean
+    z_pred += weights(i) * Zsig.col(i);
+  }
+  
+  //calculate measurement covariance matrix S
+  MatrixXd R = MatrixXd(n_z, n_z);
+  R << pow(std_radr_, 2), 0,                   0,
+       0,                 pow(std_radphi_, 2), 0,
+       0,                 0,                   pow(std_radrd_, 2);
+  S.fill(0);
+  for (int i = 0; i < 2 * n_aug + 1; i++) {
+    VectorXd diff = Zsig.col(i) - z_pred;
+    S += weights(i) * diff * diff.transpose();
+  }
+  S += R;
+  
+  //
+  // Update from measurement:
+  //
+  MatrixXd T = MatrixXd(n_x_, n_z);
+  
+  Tc.fill(0);
+  for (int i = 0; i < 2*n_aug+1; i++) {
+    // Calculate cross correlation matrix.
+    MatrixXd xdiff = Xsig_pred.col(i) - x_;
+    MatrixXd zdiff = Zsig.col(i) - z_pred;
+    Tc += weights(i) * xdiff * zdiff.transpose();
+  }
+  
+  // Calculate Kalman gain K.
+  MatrixXd K = Tc * S.inverse();
+  
+  // Update state mean and covariance matrix.
+  x_ = x_ + K * (z - z_pred);
+  P_ = P_ - K * S * K.transpose();
 }
