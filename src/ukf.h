@@ -106,6 +106,21 @@ public:
    * @param meas_package The measurement at k+1
    */
   void UpdateRadar(MeasurementPackage meas_package);
+  
+  
+  VectorXd PolarToCartesian(const VectorXd &polar_measurements);
+  
+  /**
+   * Applies the motion model f(x_k, nu_k) and returns x_(k+1).
+   * @param x_aug an augmented state vector (usually a sigma point).
+   * @param delta_t the time since the last prediction, in seconds
+   */
+  VectorXd MotionModel(VectorXd &x_aug, double delta_t);
+  
+   /**
+    * Computes the sigma points for an update step.
+    */
+  MatrixXd GetSigPoints();
 };
 
 #endif /* UKF_H */
