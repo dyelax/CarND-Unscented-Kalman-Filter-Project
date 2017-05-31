@@ -61,10 +61,10 @@ UKF::UKF() {
         0, 0, 0,    0,    1;
   
   // Predicted sigma points
-  Xsig_pred_ = MatrixXd(n_aug_, n_sig_);
+  Xsig_pred_ = MatrixXd(n_x_, n_sig_);
   
   // Init weights
-  weights_ = VectorXd(n_aug_);
+  weights_ = VectorXd(n_sig_);
   for (int i = 0; i < n_sig_; i++) {
     if (i == 0) {
       weights_(i) = lambda_ / (lambda_ + n_aug_);
@@ -98,14 +98,6 @@ VectorXd UKF::PolarToCartesian(const VectorXd &polar_measurements) {
  * either radar or laser.
  */
 void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
-  /**
-  TODO:
-
-  Complete this function! Make sure you switch between lidar and radar
-  measurements.
-  */
-  
-  
   /*****************************************************************************
    *  Initialization
    ****************************************************************************/
@@ -153,7 +145,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   previous_timestamp_ = timestamp;
   
   Prediction(dt);
-  
+
   /*****************************************************************************
    *  Update
    ****************************************************************************/
@@ -163,47 +155,6 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   } else if (meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_) {
     UpdateLidar(meas_package);
   }
-}
-
-/**
- * Applies the motion model f(x_k, nu_k) and returns x_(k+1).
- * @param x_aug an augmented state vector (usually a sigma point).
- * @param delta_t the time since the last prediction, in seconds
- */
-VectorXd UKF::MotionModel(VectorXd &x_aug, double delta_t) {
-  VectorXd covarTransVec = VectorXd(n_x_);
-  VectorXd stateTransVec = VectorXd(n_x_);
-  
-  float px      = x_aug(0);
-  float py      = x_aug(1);
-  float v       = x_aug(2);
-  float psi     = x_aug(3);
-  float psid    = x_aug(4);
-  float n_a     = x_aug(5);
-  float n_psidd = x_aug(6);
-  
-  covarTransVec << 0.5 * pow(delta_t, 2) * cos(psi) * n_a,
-  0.5 * pow(delta_t, 2) * sin(psi) * n_a,
-  delta_t * n_a,
-  0.5 * pow(delta_t, 2) * n_psidd,
-  delta_t * n_psidd;
-  
-  float eps = 0.00001;
-  if (fabs(psid) < eps) {
-    stateTransVec << v * cos(psi) * delta_t,
-                     v * sin(psi) * delta_t,
-                     0,
-                     psid * delta_t,
-                     0;
-  } else {
-    stateTransVec << (v / psid) * (sin(psi + psid * delta_t) - sin(psi)),
-                     (v / psid) * (-cos(psi + psid * delta_t) + cos(psi)),
-                     0,
-                     psid * delta_t,
-                     0;
-  }
-  
-  return x_aug.head(5) + stateTransVec + covarTransVec;
 }
 
 /** 
@@ -242,6 +193,47 @@ MatrixXd UKF::GetSigPoints() {
 }
 
 /**
+ * Applies the motion model f(x_k, nu_k) and returns x_(k+1).
+ * @param x_aug an augmented state vector (usually a sigma point).
+ * @param delta_t the time since the last prediction, in seconds
+ */
+VectorXd UKF::MotionModel(VectorXd &x_aug, double delta_t) {
+  VectorXd covarTransVec = VectorXd(n_x_);
+  VectorXd stateTransVec = VectorXd(n_x_);
+  
+  float px      = x_aug(0);
+  float py      = x_aug(1);
+  float v       = x_aug(2);
+  float psi     = x_aug(3);
+  float psid    = x_aug(4);
+  float n_a     = x_aug(5);
+  float n_psidd = x_aug(6);
+  
+  covarTransVec << 0.5 * pow(delta_t, 2) * cos(psi) * n_a,
+                   0.5 * pow(delta_t, 2) * sin(psi) * n_a,
+                   delta_t * n_a,
+                   0.5 * pow(delta_t, 2) * n_psidd,
+                   delta_t * n_psidd;
+  
+  float eps = 0.00001;
+  if (fabs(psid) < eps) {
+    stateTransVec << v * cos(psi) * delta_t,
+                     v * sin(psi) * delta_t,
+                     0,
+                     psid * delta_t,
+                     0;
+  } else {
+    stateTransVec << (v / psid) * (sin(psi + psid * delta_t) - sin(psi)),
+                     (v / psid) * (-cos(psi + psid * delta_t) + cos(psi)),
+                     0,
+                     psid * delta_t,
+                     0;
+  }
+  
+  return x_aug.head(5) + stateTransVec + covarTransVec;
+}
+
+/**
  * Predicts sigma points, the state, and the state covariance matrix.
  * @param {double} delta_t the change in time (in seconds) between the last
  * measurement and this one.
@@ -254,7 +246,7 @@ void UKF::Prediction(double delta_t) {
     VectorXd sigpt = Xsig_aug.col(i);
     Xsig_pred_.col(i) = MotionModel(sigpt, delta_t);
   }
-  
+
   // Predict mean and covar.
   x_.fill(0.0);
   for (int i = 0; i < n_sig_; i++) {
@@ -292,12 +284,13 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
   // Measurement model for lidar is linear wrt the state vector, so this is
   // equivalent to using sigma points, but cheaper.
   MatrixXd z = meas_package.raw_measurements_;
+  int n_z = 2;
   
-  MatrixXd H = MatrixXd(2, 4);
-  MatrixXd R = MatrixXd(2, 2);
+  MatrixXd H = MatrixXd(n_z, n_x_);
+  MatrixXd R = MatrixXd(n_z, n_z);
 
-  H << 1, 0, 0, 0,
-       0, 1, 0, 0;
+  H << 1, 0, 0, 0, 0,
+       0, 1, 0, 0, 0;
   R << pow(std_laspx_, 2), 0,
        0,                  std_laspy_;
   
